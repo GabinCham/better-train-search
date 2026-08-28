@@ -5,7 +5,7 @@ import re
 import time
 import webbrowser
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from browser.behavior import human_delay, human_scroll
 from browser.launcher import BrowserManager
@@ -236,9 +236,15 @@ def run_one_search(
     return offers
 
 
+def _should_retry(error: BaseException) -> bool:
+    text = str(error).lower()
+    return not any(part in text for part in ("anti-robot", "datadome", "challenge"))
+
+
 @retry(
     stop=stop_after_attempt(Config.MAX_RETRIES),
     wait=wait_exponential(multiplier=5, min=5, max=120),
+    retry=retry_if_exception(_should_retry),
 )
 def run_session(instructions: dict, profile_id: str | None = None):
     proxy = ProxyRotator().next()
