@@ -25,5 +25,8 @@ class Config:
     )
     OFFERS_FILE = os.getenv("OFFERS_FILE", "./offers.json")
     DASHBOARD_FILE = os.getenv("DASHBOARD_FILE", "./dashboard.json")
+    LINK_SERVER_HOST = os.getenv("LINK_SERVER_HOST", "127.0.0.1")
     LINK_SERVER_PORT = int(os.getenv("LINK_SERVER_PORT", 8765))
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    OPEN_OFFERS_IN_CLIENT = os.getenv("OPEN_OFFERS_IN_CLIENT", "false").lower() == "true"
     INSTRUCTIONS_FILE = os.getenv("INSTRUCTIONS_FILE", "./instructions.yaml")

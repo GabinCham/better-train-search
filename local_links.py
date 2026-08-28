@@ -24,8 +24,21 @@ SERVER_SIGNATURE = b"sncf-local-links-v8"
 RUN_PROCESS = None
 
 
+def public_base() -> str:
+    return Config.PUBLIC_BASE_URL or f"http://127.0.0.1:{Config.LINK_SERVER_PORT}"
+
+
 def offer_url(offer_id: str) -> str:
-    return f"http://127.0.0.1:{Config.LINK_SERVER_PORT}/offer/{offer_id}"
+    return f"{public_base()}/offer/{offer_id}"
+
+
+def train_href(offer: dict) -> str:
+    if Config.OPEN_OFFERS_IN_CLIENT:
+        external = offer.get("sncf_url") or ""
+        if external.startswith("http") and "/offer/" not in external:
+            return external
+        return "https://www.sncf-connect.com"
+    return offer_url(offer["id"])
 
 
 def load_offers() -> dict[str, dict]:
@@ -44,7 +57,14 @@ def save_offers(offers: list[dict]):
     path.parent.mkdir(parents=True, exist_ok=True)
     stored = load_offers()
     for offer in offers:
-        stored[offer["id"]] = {**offer, "url": offer_url(offer["id"])}
+        sncf_url = offer.get("sncf_url") or offer.get("url") or ""
+        if "/offer/" in sncf_url:
+            sncf_url = offer.get("sncf_url") or ""
+        stored[offer["id"]] = {
+            **offer,
+            "sncf_url": sncf_url,
+            "url": offer_url(offer["id"]),
+        }
     path.write_text(
         json.dumps(stored, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -201,7 +221,8 @@ def render_dashboard() -> bytes:
                     else ""
                 )
                 train_rows.append(f"""
-                <a class="{' '.join(classes)}" href="{html.escape(offer_url(offer['id']))}"
+                <a class="{' '.join(classes)}" href="{html.escape(train_href(offer))}"
+                   {"target=\"_blank\" rel=\"noopener\"" if Config.OPEN_OFFERS_IN_CLIENT else ""}
                    data-price="{offer['price']}" data-duration="{duration_minutes}"
                    data-departure="{html.escape(offer.get('departure_time', ''))}">
                   <span class="time">{html.escape(offer.get('departure_time', '—'))}
@@ -741,6 +762,13 @@ class LinkHandler(BaseHTTPRequestHandler):
             ))
             return
 
+        if Config.OPEN_OFFERS_IN_CLIENT:
+            target = train_href(offer)
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.end_headers()
+            return
+
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "open", offer["id"]],
             cwd=ROOT,
@@ -790,7 +818,10 @@ class LinkHandler(BaseHTTPRequestHandler):
 
 
 def run_server():
-    server = ThreadingHTTPServer(("127.0.0.1", Config.LINK_SERVER_PORT), LinkHandler)
+    server = ThreadingHTTPServer(
+        (Config.LINK_SERVER_HOST, Config.LINK_SERVER_PORT),
+        LinkHandler,
+    )
     server.serve_forever()
 
 

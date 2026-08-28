@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 from playwright.sync_api import sync_playwright
 from config import Config
@@ -32,6 +33,12 @@ class BrowserManager:
                 "--disable-popup-blocking",
             ]
         }
+        if sys.platform.startswith("linux"):
+            launch_args["args"].extend([
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ])
 
         if self.proxy:
             launch_args["proxy"] = {"server": self.proxy}

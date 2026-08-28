@@ -328,7 +328,10 @@ def main():
 
         if not args.watch:
             if not failed and links_ready:
-                webbrowser.open(f"http://127.0.0.1:{Config.LINK_SERVER_PORT}/")
+                dashboard = Config.PUBLIC_BASE_URL or f"http://127.0.0.1:{Config.LINK_SERVER_PORT}"
+                print(f"[+] Résultats : {dashboard}/")
+                if not Config.PUBLIC_BASE_URL:
+                    webbrowser.open(f"{dashboard}/")
             break
         interval, reason = next_watch_interval(failed)
         print(f"[+] {reason} dans {interval // 60} min {interval % 60:02d}s")
