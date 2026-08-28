@@ -1,0 +1,8 @@
+site: https://www.sncf-connect.com
+max_resultats: 0
+max_alertes: 30
+recherches:
+- depart: Ecommoy
+  destination: Arnage
+  dates:
+  - '2026-08-31'

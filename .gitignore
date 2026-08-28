@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Chrome profiles (cookies, sessions, DataDome)
+profiles/
+
+# Runtime data
+*.log
+offers.json
+dashboard.json
+seen_offers.json
+seen_items.json
+*.yaml.tmp
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
