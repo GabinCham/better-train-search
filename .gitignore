@@ -19,6 +19,7 @@ offers.json
 dashboard.json
 seen_offers.json
 seen_items.json
+search_status.json
 *.yaml.tmp
 
 # OS / editor

@@ -30,3 +30,4 @@ class Config:
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
     OPEN_OFFERS_IN_CLIENT = os.getenv("OPEN_OFFERS_IN_CLIENT", "false").lower() == "true"
     INSTRUCTIONS_FILE = os.getenv("INSTRUCTIONS_FILE", "./instructions.yaml")
+    SEARCH_STATUS_FILE = os.getenv("SEARCH_STATUS_FILE", "./search_status.json")

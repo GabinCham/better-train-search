@@ -17,6 +17,7 @@ from browser.launcher import BrowserManager
 from config import Config
 from sncf import search_journeys
 from utils.instructions import load_instructions
+from utils.status import load_search_status, process_is_alive, set_search_status
 
 
 ROOT = Path(__file__).resolve().parent
@@ -491,7 +492,11 @@ def _route_form(search: dict, index: int) -> str:
     </section>"""
 
 
-def render_settings(message: str = "", is_error: bool = False) -> bytes:
+def render_settings(
+    message: str = "",
+    is_error: bool = False,
+    watch_search: bool = False,
+) -> bytes:
     try:
         instructions = load_instructions()
     except Exception:
@@ -507,10 +512,11 @@ def render_settings(message: str = "", is_error: bool = False) -> bytes:
         }
     searches = instructions.get("searches") or []
     cards = "".join(_route_form(search, index) for index, search in enumerate(searches))
-    notice = (
-        f'<div class="notice {"error" if is_error else ""}">{html.escape(message)}</div>'
-        if message else ""
-    )
+    notice = ""
+    if message and not watch_search:
+        notice = (
+            f'<div class="notice {"error" if is_error else ""}">{html.escape(message)}</div>'
+        )
     return f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -563,6 +569,33 @@ def render_settings(message: str = "", is_error: bool = False) -> bytes:
     .actions button {{ padding:13px 18px; border-radius:9px; font-weight:800; }}
     .save {{ color:var(--blue); background:white; border:1px solid #a9cbed; }}
     .run {{ color:white; background:var(--blue); border:1px solid var(--blue); }}
+    .overlay {{ position:fixed; inset:0; display:none; place-items:center;
+      background:rgba(12,18,34,.55); backdrop-filter:blur(8px); z-index:40; padding:20px; }}
+    .overlay.open {{ display:grid; }}
+    .sheet {{ width:min(440px,100%); color:white; background:#111a30; border-radius:22px;
+      padding:28px 26px 22px; box-shadow:0 24px 60px rgba(8,14,30,.35); }}
+    .sheet h2 {{ margin:0 0 6px; font-size:22px; }}
+    .sheet .live {{ margin:0 0 22px; color:#9eb4d4; font-size:14px; line-height:1.45; min-height:2.6em; }}
+    .steps {{ list-style:none; margin:0; padding:0; display:grid; gap:13px; }}
+    .steps li {{ display:grid; grid-template-columns:22px 1fr; gap:12px; align-items:center;
+      color:#7f90ab; font-weight:650; }}
+    .steps li .dot {{ width:14px; height:14px; margin:4px; border-radius:50%;
+      border:2px solid #3a4b6a; background:transparent; }}
+    .steps li.done {{ color:#d5e7ff; }}
+    .steps li.done .dot {{ border-color:#3ecf8e; background:#3ecf8e; }}
+    .steps li.current {{ color:white; }}
+    .steps li.current .dot {{ border-color:#5aa8ff; background:#5aa8ff;
+      box-shadow:0 0 0 6px rgba(90,168,255,.18); animation:pulse 1.4s ease-in-out infinite; }}
+    .steps li.error {{ color:#ffc4bc; }}
+    .steps li.error .dot {{ border-color:#ff6b5c; background:#ff6b5c; }}
+    @keyframes pulse {{ 50% {{ box-shadow:0 0 0 10px rgba(90,168,255,.08); }} }}
+    .sheet-actions {{ margin-top:24px; display:none; }}
+    .sheet-actions.show {{ display:block; }}
+    .sheet-actions a {{ display:block; text-align:center; text-decoration:none;
+      color:#111a30; background:white; border-radius:12px; padding:13px;
+      font-weight:800; }}
+    .sheet-actions button {{ width:100%; color:white; background:#26324a; border:0;
+      border-radius:12px; padding:13px; font-weight:800; }}
     @media(max-width:620px) {{
       .two-cols,.options-grid {{ grid-template-columns:1fr; }}
       .dates input {{ width:100%; }} .actions {{ flex-direction:column; }}
@@ -593,6 +626,15 @@ def render_settings(message: str = "", is_error: bool = False) -> bytes:
       </div>
     </form>
   </main>
+  <div class="overlay" id="searchOverlay" role="dialog" aria-modal="true"
+    aria-labelledby="searchTitle">
+    <div class="sheet">
+      <h2 id="searchTitle">Recherche en cours</h2>
+      <p class="live" id="searchLive">Préparation de la recherche…</p>
+      <ol class="steps" id="searchSteps"></ol>
+      <div class="sheet-actions" id="searchActions"></div>
+    </div>
+  </div>
   <script>
     let nextIndex = {len(searches)};
     function syncDateRemoves(dates) {{
@@ -645,6 +687,52 @@ def render_settings(message: str = "", is_error: bool = False) -> bytes:
         </label>`;
       document.querySelector("#searches").appendChild(section);
       syncDateRemoves(section.querySelector(".dates"));
+    }}
+    const overlay = document.querySelector("#searchOverlay");
+    const live = document.querySelector("#searchLive");
+    const stepsEl = document.querySelector("#searchSteps");
+    const actions = document.querySelector("#searchActions");
+    let poller = null;
+    function renderStatus(data) {{
+      const steps = data.steps || [];
+      const step = Number(data.step || 0);
+      const state = data.state || "idle";
+      live.textContent = data.error || data.label || "Recherche en cours…";
+      stepsEl.innerHTML = steps.map((name, index) => {{
+        let cls = "";
+        if (state === "error" && index === step) cls = "error";
+        else if (state === "done" || index < step) cls = "done";
+        else if (index === step) cls = "current";
+        return `<li class="${{cls}}"><span class="dot"></span>${{name}}</li>`;
+      }}).join("");
+      if (state === "done") {{
+        document.querySelector("#searchTitle").textContent = "Recherche terminée";
+        actions.className = "sheet-actions show";
+        actions.innerHTML = '<a href="/">Voir les trains</a>';
+        if (poller) clearInterval(poller);
+      }} else if (state === "error") {{
+        document.querySelector("#searchTitle").textContent = "Recherche interrompue";
+        actions.className = "sheet-actions show";
+        actions.innerHTML = '<button type="button" id="closeSearch">Fermer</button>';
+        document.querySelector("#closeSearch").onclick = () => overlay.classList.remove("open");
+        if (poller) clearInterval(poller);
+      }} else {{
+        document.querySelector("#searchTitle").textContent = "Recherche en cours";
+        actions.className = "sheet-actions";
+        actions.innerHTML = "";
+      }}
+    }}
+    async function pollStatus() {{
+      try {{
+        const response = await fetch("/search-status");
+        if (!response.ok) return;
+        renderStatus(await response.json());
+      }} catch (error) {{}}
+    }}
+    if ({str(watch_search).lower()}) {{
+      overlay.classList.add("open");
+      pollStatus();
+      poller = setInterval(pollStatus, 1200);
     }}
   </script>
 </body>
@@ -704,6 +792,7 @@ def start_bot() -> bool:
     global RUN_PROCESS
     if RUN_PROCESS and RUN_PROCESS.poll() is None:
         return False
+    set_search_status("queued", "La recherche va démarrer", step=0)
     log = (ROOT / "bot-run.log").open("a", encoding="utf-8")
     try:
         RUN_PROCESS = subprocess.Popen(
@@ -713,6 +802,12 @@ def start_bot() -> bool:
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+        )
+        set_search_status(
+            "queued",
+            "La recherche va démarrer",
+            step=0,
+            pid=RUN_PROCESS.pid,
         )
     finally:
         log.close()
@@ -734,10 +829,33 @@ class LinkHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(render_dashboard())
             return
+        if path == "/search-status":
+            payload = load_search_status()
+            running = bool(
+                (RUN_PROCESS and RUN_PROCESS.poll() is None)
+                or process_is_alive(payload.get("pid"))
+            )
+            payload["running"] = running
+            if (
+                not running
+                and payload.get("state") in {
+                    "queued", "starting", "opening", "searching", "ranking",
+                }
+            ):
+                payload["state"] = "error"
+                payload["error"] = payload.get("error") or "La recherche s'est arrêtée."
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/settings":
             query = parse_qs(parsed_url.query)
+            watch_search = "started" in query or "running" in query
             if "started" in query:
-                message = "Recherche lancée. Chrome va s'ouvrir et le tableau de bord sera actualisé."
+                message = "Recherche lancée."
             elif "running" in query:
                 message = "Une recherche est déjà en cours."
             elif "saved" in query:
@@ -747,7 +865,7 @@ class LinkHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(render_settings(message))
+            self.wfile.write(render_settings(message, watch_search=watch_search))
             return
 
         match = re.fullmatch(r"/offer/([a-f0-9]{20})", path)

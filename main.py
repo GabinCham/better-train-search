@@ -1,4 +1,5 @@
 import argparse
+import os
 import random
 import re
 import time
@@ -20,6 +21,7 @@ from proxy.rotator import ProxyRotator
 from sncf import collect_offers, search_journeys
 from utils.discord import send_challenge_alert, send_train_alert
 from utils.instructions import load_instructions
+from utils.status import set_search_status
 
 
 LAST_CHALLENGE_ALERT_AT = 0.0
@@ -192,6 +194,11 @@ def run_one_search(
     wait_for_challenge_resolution(page)
 
     accept_cookies(page)
+    set_search_status(
+        "searching",
+        f"Recherche du {search['date']} : {search['origin']} → {search['destination']}",
+        step=2,
+    )
     search_journeys(page, search)
     wait_for_challenge_resolution(page)
 
@@ -247,6 +254,7 @@ def run_session(instructions: dict, profile_id: str | None = None):
         )
 
     manager = BrowserManager(proxy=proxy, profile_id=profile_id)
+    set_search_status("opening", "Ouverture de SNCF Connect", step=1)
     page = manager.start()
     try:
         reset_dashboard()
@@ -259,7 +267,19 @@ def run_session(instructions: dict, profile_id: str | None = None):
                     f"[+] Recherche du {travel_date} : "
                     f"{search['origin']} → {search['destination']}"
                 )
+                set_search_status(
+                    "searching",
+                    f"Recherche du {travel_date} : "
+                    f"{search['origin']} → {search['destination']}",
+                    step=2,
+                )
                 route_offers.extend(run_one_search(page, dated_search, site))
+
+            set_search_status(
+                "ranking",
+                f"Comparaison des prix · {search['origin']} → {search['destination']}",
+                step=3,
+            )
 
             selected = select_cheapest(
                 route_offers,
@@ -276,9 +296,24 @@ def run_session(instructions: dict, profile_id: str | None = None):
             # notify_new_offers(selected, instructions["max_alerts"])
             all_offers.extend(selected)
         print(f"[+] Session réussie · {len(all_offers)} billet(s) trouvé(s)")
+        set_search_status(
+            "done",
+            (
+                f"{len(all_offers)} train(s) trouvé(s)"
+                if all_offers
+                else "Aucun train trouvé pour ces critères"
+            ),
+            step=4,
+            offer_count=len(all_offers),
+        )
         return all_offers
     except Exception as error:
         print(f"[!] Erreur session : {type(error).__name__}: {error}")
+        set_search_status(
+            "error",
+            "La recherche n'a pas pu aboutir",
+            error=str(error),
+        )
         challenged = "challenge" in str(error).lower()
         if not challenged:
             try:
@@ -312,6 +347,8 @@ def main():
     else:
         print("[!] Impossible de démarrer l'interface locale")
 
+    set_search_status("starting", "Démarrage de la recherche", step=0, pid=os.getpid())
+
     if not Config.DISCORD_WEBHOOK_URL:
         print("[!] Discord non configuré : les résultats seront affichés dans le terminal")
 
@@ -325,6 +362,11 @@ def main():
         except Exception as error:
             failed = True
             print(f"[-] Échec après retries : {error}")
+            set_search_status(
+                "error",
+                "La recherche n'a pas pu aboutir",
+                error=str(error),
+            )
 
         if not args.watch:
             if not failed and links_ready:
