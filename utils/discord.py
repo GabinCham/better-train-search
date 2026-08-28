@@ -69,9 +69,9 @@ def send_train_alert(offer: dict) -> bool:
 
 def send_challenge_alert(url: str, title: str, reason: str) -> bool:
     payload = {
-        "content": "🚨 **Challenge ou détection SNCF Connect**",
+        "content": "🚨 **SNCF a détecté le robot**",
         "embeds": [{
-            "title": "Surveillance interrompue par une protection",
+            "title": "Recherche bloquée (anti-bot)",
             "url": url or SNCF_FALLBACK,
             "color": 15158332,
             "fields": [

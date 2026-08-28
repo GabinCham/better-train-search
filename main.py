@@ -70,6 +70,7 @@ CHALLENGE_MESSAGE = (
 def wait_for_challenge_resolution(page, timeout_seconds: int = 120):
     if not is_challenged(page):
         return
+    alert_challenge(page, CHALLENGE_MESSAGE)
     if Config.HEADLESS or Config.PUBLIC_BASE_URL:
         raise RuntimeError(CHALLENGE_MESSAGE)
 
@@ -103,7 +104,7 @@ def alert_challenge(page, reason: str):
         title = page.title()
     except Exception:
         url, title = "", ""
-    # send_challenge_alert(url, title, reason)
+    send_challenge_alert(url, title, reason)
 
 
 def next_watch_interval(failed: bool) -> tuple[int, str]:
@@ -315,7 +316,10 @@ def run_session(instructions: dict, profile_id: str | None = None):
             "La recherche n'a pas pu aboutir",
             error=str(error),
         )
-        challenged = "challenge" in str(error).lower()
+        text = str(error).lower()
+        challenged = any(
+            part in text for part in ("challenge", "datadome", "anti-robot")
+        )
         if not challenged:
             try:
                 challenged = is_challenged(page)
@@ -351,7 +355,7 @@ def main():
     set_search_status("starting", "Démarrage de la recherche", step=0, pid=os.getpid())
 
     if not Config.DISCORD_WEBHOOK_URL:
-        print("[!] Discord non configuré : les résultats seront affichés dans le terminal")
+        print("[!] Discord non configuré : pas d'alerte si SNCF détecte le bot")
 
     while True:
         failed = False
