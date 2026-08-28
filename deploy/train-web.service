@@ -1,6 +1,7 @@
 [Unit]
 Description=Better Train Search dashboard
-After=network.target
+After=network.target xvfb.service
+Requires=xvfb.service
 
 [Service]
 Type=simple
@@ -8,6 +9,7 @@ User=train
 Group=train
 WorkingDirectory=/opt/better-train-search
 Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:99
 ExecStart=/opt/better-train-search/venv/bin/python local_links.py serve
 Restart=always
 RestartSec=3

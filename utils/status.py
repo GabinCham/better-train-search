@@ -36,16 +36,17 @@ def _status_path() -> Path:
 def set_search_status(
     state: str,
     label: str,
-    step: int = 0,
+    step: int | None = None,
     error: str | None = None,
     offer_count: int | None = None,
     pid: int | None = None,
 ):
     path = _status_path()
     current = load_search_status()
+    resolved_step = current.get("step", 0) if step is None else step
     payload = {
         "state": state,
-        "step": max(0, min(step, len(SEARCH_STEPS) - 1)),
+        "step": max(0, min(int(resolved_step), len(SEARCH_STEPS) - 1)),
         "steps": list(SEARCH_STEPS),
         "label": label,
         "error": error,

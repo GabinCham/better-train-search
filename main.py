@@ -62,13 +62,16 @@ def is_challenged(page) -> bool:
     return False
 
 
+CHALLENGE_MESSAGE = (
+    "SNCF a demandé une vérification anti-robot. Réessaie dans quelques minutes."
+)
+
+
 def wait_for_challenge_resolution(page, timeout_seconds: int = 120):
     if not is_challenged(page):
         return
-    if Config.HEADLESS:
-        raise RuntimeError(
-            "Challenge DataDome détecté en mode invisible. Configurez HEADLESS=false."
-        )
+    if Config.HEADLESS or Config.PUBLIC_BASE_URL:
+        raise RuntimeError(CHALLENGE_MESSAGE)
 
     print(
         "[!] Challenge DataDome affiché dans Chrome. "
@@ -81,9 +84,7 @@ def wait_for_challenge_resolution(page, timeout_seconds: int = 120):
             print("[+] Challenge validé, reprise de la recherche")
             human_delay(600, 1000)
             return
-    raise RuntimeError(
-        f"Challenge DataDome non validé après {timeout_seconds} secondes"
-    )
+    raise RuntimeError(CHALLENGE_MESSAGE)
 
 
 def alert_challenge(page, reason: str):

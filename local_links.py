@@ -1,6 +1,7 @@
 import argparse
 import html
 import json
+import os
 import re
 import subprocess
 import sys
@@ -793,11 +794,14 @@ def start_bot() -> bool:
     if RUN_PROCESS and RUN_PROCESS.poll() is None:
         return False
     set_search_status("queued", "La recherche va démarrer", step=0)
+    env = os.environ.copy()
+    env.setdefault("DISPLAY", ":99")
     log = (ROOT / "bot-run.log").open("a", encoding="utf-8")
     try:
         RUN_PROCESS = subprocess.Popen(
             [sys.executable, str(ROOT / "main.py")],
             cwd=ROOT,
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
