@@ -20,6 +20,9 @@ dashboard.json
 seen_offers.json
 seen_items.json
 search_status.json
+job.json
+worker.json
+.worker_token
 *.yaml.tmp
 
 # OS / editor

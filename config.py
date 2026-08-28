@@ -31,3 +31,11 @@ class Config:
     OPEN_OFFERS_IN_CLIENT = os.getenv("OPEN_OFFERS_IN_CLIENT", "false").lower() == "true"
     INSTRUCTIONS_FILE = os.getenv("INSTRUCTIONS_FILE", "./instructions.yaml")
     SEARCH_STATUS_FILE = os.getenv("SEARCH_STATUS_FILE", "./search_status.json")
+    JOB_FILE = os.getenv("JOB_FILE", "./job.json")
+    WORKER_HEARTBEAT_FILE = os.getenv("WORKER_HEARTBEAT_FILE", "./worker.json")
+    USE_REMOTE_WORKER = os.getenv("USE_REMOTE_WORKER", "false").lower() == "true"
+    WORKER_TOKEN = os.getenv("WORKER_TOKEN", "").strip()
+    WORKER_HUB = os.getenv("WORKER_HUB", "").rstrip("/")
+    WORKER_BASIC_USER = os.getenv("WORKER_BASIC_USER", "").strip()
+    WORKER_BASIC_PASSWORD = os.getenv("WORKER_BASIC_PASSWORD", "").strip()
+    SKIP_LOCAL_SERVER = os.getenv("SKIP_LOCAL_SERVER", "false").lower() == "true"

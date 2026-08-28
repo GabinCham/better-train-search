@@ -349,8 +349,10 @@ def main():
     )
     args = parser.parse_args()
 
-    links_ready = ensure_link_server()
-    if links_ready:
+    links_ready = False if Config.SKIP_LOCAL_SERVER else ensure_link_server()
+    if Config.SKIP_LOCAL_SERVER:
+        print("[+] Mode robot : le site public affiche les résultats")
+    elif links_ready:
         print(
             f"[+] Interface locale : "
             f"http://127.0.0.1:{Config.LINK_SERVER_PORT}/"

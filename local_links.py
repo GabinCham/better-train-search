@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -18,12 +19,20 @@ from browser.launcher import BrowserManager
 from config import Config
 from sncf import search_journeys
 from utils.instructions import load_instructions
+from utils.job import (
+    load_job,
+    queue_remote_job,
+    save_job,
+    touch_worker,
+    worker_is_online,
+)
 from utils.status import load_search_status, process_is_alive, set_search_status
 
 
 ROOT = Path(__file__).resolve().parent
-SERVER_SIGNATURE = b"sncf-local-links-v8"
+SERVER_SIGNATURE = b"sncf-local-links-v9"
 RUN_PROCESS = None
+JOB_LOCK = threading.Lock()
 
 
 def public_base() -> str:
@@ -533,6 +542,7 @@ def render_settings(
     header a {{ color:#bcd5f2; text-decoration:none; font-size:13px; font-weight:700; }}
     header h1 {{ margin:12px 0 5px; font-size:34px; }}
     header p {{ margin:0; color:#b9c6d9; }}
+    header .how {{ margin-top:10px; max-width:52rem; font-size:14px; color:#9eb4d4; }}
     main {{ max-width:900px; margin:auto; padding:26px 20px 60px; }}
     .notice {{ margin-bottom:18px; padding:13px 15px; color:#075f43;
       background:#e5f7ef; border:1px solid #a7dfca; border-radius:10px; font-weight:700; }}
@@ -606,7 +616,8 @@ def render_settings(
 <body>
   <header><a href="/">← Retour aux résultats</a>
     <h1>Préparer une recherche</h1>
-    <p>Choisis les trajets et les jours que le bot doit comparer.</p></header>
+    <p>Choisis les trajets et les jours que le bot doit comparer.</p>
+    {"<p class='how'>Rien à installer : tu lances la recherche ici, les trains s’affichent ensuite sur cette page.</p>" if Config.USE_REMOTE_WORKER else ""}</header>
   <main>{notice}
     <form method="post" action="/settings">
       <div id="searches">{cards}</div>
@@ -791,6 +802,32 @@ def save_settings(parameters: dict[str, list[str]]):
 
 def start_bot() -> bool:
     global RUN_PROCESS
+    if Config.USE_REMOTE_WORKER:
+        with JOB_LOCK:
+            job = load_job()
+            if job.get("state") in ("queued", "running"):
+                stale = not worker_is_online(90)
+                started = job.get("started_at") or job.get("queued_at") or ""
+                too_old = True
+                if started:
+                    try:
+                        too_old = (
+                            datetime.now() - datetime.fromisoformat(started)
+                        ).total_seconds() > 20 * 60
+                    except ValueError:
+                        too_old = True
+                if not stale and not too_old:
+                    return False
+                save_job({"id": None, "state": "idle"})
+            if not queue_remote_job():
+                return False
+        waiting = (
+            "Recherche en file d'attente…"
+            if worker_is_online()
+            else "En attente de l'ordinateur qui lance les recherches. Réessaie dans un moment."
+        )
+        set_search_status("queued", waiting, step=0, pid=0)
+        return True
     if RUN_PROCESS and RUN_PROCESS.poll() is None:
         return False
     set_search_status("queued", "La recherche va démarrer", step=0)
@@ -818,6 +855,11 @@ def start_bot() -> bool:
     return True
 
 
+def _worker_authorized(handler: BaseHTTPRequestHandler) -> bool:
+    token = (handler.headers.get("X-Worker-Token") or "").strip()
+    return bool(Config.WORKER_TOKEN) and token == Config.WORKER_TOKEN
+
+
 class LinkHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_url = urlparse(self.path)
@@ -835,25 +877,44 @@ class LinkHandler(BaseHTTPRequestHandler):
             return
         if path == "/search-status":
             payload = load_search_status()
-            running = bool(
-                (RUN_PROCESS and RUN_PROCESS.poll() is None)
-                or process_is_alive(payload.get("pid"))
-            )
-            payload["running"] = running
-            if (
-                not running
-                and payload.get("state") in {
-                    "queued", "starting", "opening", "searching", "ranking",
-                }
-            ):
-                payload["state"] = "error"
-                payload["error"] = payload.get("error") or "La recherche s'est arrêtée."
+            active_states = {
+                "queued", "starting", "opening", "searching", "ranking",
+            }
+            if Config.USE_REMOTE_WORKER:
+                job = load_job()
+                job_busy = job.get("state") in ("queued", "running")
+                running = job_busy or payload.get("state") in active_states
+                payload["running"] = running
+                payload["worker_online"] = worker_is_online()
+                if job.get("state") == "queued" and not worker_is_online():
+                    payload["label"] = (
+                        "En attente de l'ordinateur qui lance les recherches. Réessaie dans un moment."
+                    )
+                elif job.get("state") == "running" and not worker_is_online(45):
+                    payload["label"] = (
+                        "Connexion perdue. Réessaie dans un moment."
+                    )
+            else:
+                running = bool(
+                    (RUN_PROCESS and RUN_PROCESS.poll() is None)
+                    or process_is_alive(payload.get("pid"))
+                )
+                payload["running"] = running
+                if (
+                    not running
+                    and payload.get("state") in active_states
+                ):
+                    payload["state"] = "error"
+                    payload["error"] = payload.get("error") or "La recherche s'est arrêtée."
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path in ("/worker/next", "/worker/ping"):
+            self._handle_worker_get(path)
             return
         if path == "/settings":
             query = parse_qs(parsed_url.query)
@@ -913,6 +974,9 @@ class LinkHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = unquote(urlparse(self.path).path)
+        if path.startswith("/worker/"):
+            self._handle_worker_post(path)
+            return
         if path != "/settings":
             self.send_error(404)
             return
@@ -934,6 +998,91 @@ class LinkHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(render_settings(str(error), is_error=True))
+
+    def _json(self, code: int, payload: dict):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self, max_size: int) -> dict:
+        length = min(int(self.headers.get("Content-Length", "0") or 0), max_size)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw or "{}")
+        if not isinstance(data, dict):
+            raise ValueError("JSON object attendu")
+        return data
+
+    def _handle_worker_get(self, path: str):
+        if not _worker_authorized(self):
+            self._json(401, {"error": "unauthorized"})
+            return
+        touch_worker()
+        if path == "/worker/ping":
+            self._json(200, {"ok": True, "job": load_job()})
+            return
+        with JOB_LOCK:
+            job = load_job()
+            if job.get("state") != "queued":
+                self._json(200, {"job": None})
+                return
+            job["state"] = "running"
+            job["started_at"] = datetime.now().isoformat(timespec="seconds")
+            save_job(job)
+        instructions_path = Path(Config.INSTRUCTIONS_FILE)
+        try:
+            instructions = instructions_path.read_text(encoding="utf-8")
+        except OSError:
+            instructions = ""
+        self._json(200, {
+            "id": job.get("id"),
+            "instructions": instructions,
+        })
+
+    def _handle_worker_post(self, path: str):
+        if not _worker_authorized(self):
+            self._json(401, {"error": "unauthorized"})
+            return
+        try:
+            data = self._read_json(2_000_000)
+        except (ValueError, json.JSONDecodeError):
+            self._json(400, {"error": "invalid json"})
+            return
+        if path == "/worker/ping":
+            touch_worker()
+            self._json(200, {"ok": True})
+            return
+        if path == "/worker/status":
+            touch_worker()
+            set_search_status(
+                str(data.get("state") or "searching"),
+                str(data.get("label") or ""),
+                step=data.get("step"),
+                error=data.get("error"),
+                offer_count=data.get("offer_count"),
+                skip_hub_push=True,
+            )
+            self._json(200, {"ok": True})
+            return
+        if path == "/worker/results":
+            Path(Config.DASHBOARD_FILE).write_text(
+                json.dumps(data.get("dashboard") or {}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            Path(Config.OFFERS_FILE).write_text(
+                json.dumps(data.get("offers") or {}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self._json(200, {"ok": True})
+            return
+        if path == "/worker/finished":
+            with JOB_LOCK:
+                save_job({"id": None, "state": "idle"})
+            self._json(200, {"ok": True})
+            return
+        self.send_error(404)
 
     def log_message(self, _format, *_args):
         return
